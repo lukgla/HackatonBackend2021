@@ -1,0 +1,31 @@
+{
+  "name": "HackatonBackend2021",
+  "version": "1.0.0",
+  "description": "This is backend of hide and seek aplication",
+  "main": "index.js",
+  "scripts": {
+    "dev": "ts-node src/server.ts",
+    "start": "ts-node dist/server.js",
+    "build": "tsc -p ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lukgla/HackatonBackend2021.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lukgla/HackatonBackend2021/issues"
+  },
+  "homepage": "https://github.com/lukgla/HackatonBackend2021#readme",
+  "dependencies": {
+    "@types/node": "^15.12.2",
+    "@types/socket.io": "^3.0.2",
+    "@types/uuid": "^8.3.0",
+    "socket.io": "^4.1.2",
+    "ts-node": "^10.0.0",
+    "typescript": "^4.3.2",
+    "uuid": "^8.3.2"
+  }
+}
