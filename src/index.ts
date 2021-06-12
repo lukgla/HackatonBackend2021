@@ -1,3 +1,4 @@
+import { debug } from "console";
 import console = require("console");
 import { Server,Socket as _Socket } from "socket.io";
 import {v4 as uuid} from 'uuid'
@@ -16,6 +17,7 @@ interface GameForm{
     name:string,
     maxPlayers: number,
     maxGameTime: Number, //in sec
+
     closeZoneRadius:Number,
     fullZoneRadius: Number,
     gameIsPublic:boolean,
@@ -67,40 +69,60 @@ const io = new Server({
     }
 });
 const redis = new Map<string,GameForm>()
+const PublicGames = new Set<string>();
+
+const pendingGames:Set<string>= new Set<string>();
 
 
-const pendingGames:GameForm[]= [];
-
-
-setInterval(()=>{
-    pendingGames.forEach(
-        (val:GameForm,index)=>{
-            if(val.readyHiddenPlayer+1>=val.playerAndStatus.size){
-                io.to(val.roomId).emit("gameStart",val.playerAndStatus)
+// setInterval(()=>{
+//     pendingGames.forEach(
+//         (val:string,index)=>{
+    
+const startGame =(val:string)=>{
+            const obj=redis[val]
+            if(obj.readyHiddenPlayer+1>=obj.playerAndStatus.size){
+                io.to(obj.roomId).emit("gameStart",obj)
                 // pendingGames.//remove el from array
+                console.log(obj.playerAndStatus)
+                pendingGames.delete(val)
+                if(obj.gameIsPublic){
+                    PublicGames.delete(obj.roomId)
+                }
+                console.log(`GameStartLoop: ${obj.roomId}`);
+                
             }
         }
-    )
-},1000)
+        // }
+    // )
+// },1000)
 
 
 io.on('connection',(socket:Socket)=>{
-    console.log("conn")
+    console.log(`New chalenger have arived ${socket.id}`)
+
+    socket.on("public",(callback:CallableFunction)=>{
+        let res=[]
+        PublicGames.forEach((val)=>{
+            res.push([redis[val].name,val])
+        })
+        callback(res)
+    })
+
     socket.on("createGame",(GameSetupObject:GameForm,callback:CallableFunction)=>{
         const gameId:string = uuid();
             redis[gameId]=createGameObject(GameSetupObject,gameId)
-        //todo db
-        console.log(socket.id)
         socket.join(gameId)
         socket.props={room:gameId}
-        // socket.props.room=gameId
-        console.log(gameId);
-
-        redis[gameId].playerAndStatus[socket.id]={
+        redis[gameId].playerAndStatus[socket.id]=  {
             name:"",
             role:"",
             isReady:false,
             pos:[0,0]
+        }
+
+        console.log(`CreateGame: ${gameId} by ${socket.id}`);
+        if(GameSetupObject.gameIsPublic){
+            PublicGames.add(gameId)
         }
 
         callback(gameId);
@@ -108,62 +130,89 @@ io.on('connection',(socket:Socket)=>{
     socket.on("startGame",(roomId:string,callback:CallableFunction)=>{
         io.in(roomId).allSockets().then(
             (res:Set<String>)=>{
-                console.log(res)
-                
-                const seeker:any=Array.from(res)[Math.floor(Math.random()*(res.size-1))]
+                console.log(`StartGame:\n\t Sockets in room: ${res.toString()}`)
+                let index=Math.floor(Math.random()*(res.size))
+                if (index+1==res.size){index-=1}
+                const seeker:any=Array.from(res)[index]
                 const seekerSocket =io.to(seeker)
+                console.log(`Seeker: ${seeker}`);
+                
                 seekerSocket.emit("choice",'seeker')
-                console.log('seeker');
-                const gameObj:Map<string,PlayerProp> =redis[roomId].playerAndStatus
+                // const gameObj:Map<string,PlayerProp> =redis[roomId].playerAndStatus
 
-                gameObj[seeker].role="seeker"
-                gameObj[seeker].isReady=true
+                redis[roomId].playerAndStatus[seeker].role="seeker"
+                redis[roomId].playerAndStatus[seeker].isReady=true
                 
                 res.forEach((socketId:string)=>{
                     if(socketId!=seeker){
                         io.to(socketId).emit("choice","hide")
-                        gameObj[socketId].role="hide"
+                        redis[roomId].playerAndStatus[socketId].role="hide"
+                        console.log(redis[roomId].playerAndStatus)
                     }
                 })
-                pendingGames.push(redis[roomId])
+                pendingGames.add(roomId)
+                callback(redis[roomId])
             }  
             )
-            console.log('started')
-            callback('ok')
     })
 
 
     socket.on('hideReady',(pos:[number,number])=>{
+        console.log("startedhidding");
+        
         const id=socket.props.room
-        if(!redis[id].playerAndStatus[socket.id]){
-            redis[id].playerAndStatus[socket.id]=true
+        if(redis[id].playerAndStatus[socket.id].role=="hide"){
+            redis[id].playerAndStatus[socket.id].isReady=true
+            redis[id].playerAndStatus[socket.id].pos=pos
             redis[id].readyHiddenPlayer+=1
+            console.log(`Player ${socket.id} is ready`);
+            console.log(redis[id].playerAndStatus)
+            
         }
-        console.log(pos)
-        console.log(id);
+        startGame(id)
         
     })
     socket.on("winGame",()=>{
+        //TODO CleanUP
 
     })
     socket.on("joinGame",(id:string,callback:CallableFunction)=>{
         socket.props={room:id}
         socket.join(id)
-        redis[id].playerAndStatus[socket.id]={
-            name:"",
-            role:"",
-            isReady:false,
-            pos:[0,0]
+        if(redis[id]!=undefined){
+            redis[id].playerAndStatus[socket.id]={
+                name:"",
+                role:"",
+                isReady:false,
+                pos:[0,0]
+            }
+            console.log(`Game Joined by ${socket.id}`);
+            
+            callback(redis[id])
         }
-        
-        console.log("join")
-        callback(redis[id])
+        else{
+            // callback({})
+        }
     })
     // socket.on()
     // socket.rooms.
     socket.on('disconnect',()=>{
-        console.log('dis')
+        console.log(`Dropping socket: ${socket.id}`)
     })
+
+    socket.on("found",(foundedId:string)=>{
+        const {room} = socket.props
+        io.to(foundedId).emit("founded")
+        redis[room].readyHiddenPlayer-=1
+        if(redis[room].readyHiddenPlayer==0){
+            io.to(room).emit("gameEnd")
+        }
+
+    })
+    // socket.onAny((args)=>{
+    //     console.log(redis)
+    // })
+
 })
 
 io.listen(5000)
